@@ -1,6 +1,5 @@
 .DS_Store
-youtube-export/data
-youtube-export/node_modules
+data
 node_modules
 libmux/libmux.dylib
 typing

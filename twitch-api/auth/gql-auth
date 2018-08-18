@@ -1,0 +1,33 @@
+#!/usr/bin/env node
+(async() => {
+  const arg = process.argv[2];
+  const puppeteer = require('puppeteer');
+  const browser = await puppeteer.launch({
+    headless: (arg !== "--login"),
+    userDataDir: __dirname+"/data"
+  });
+  const page = (await browser.pages())[0];
+  
+  if (arg === "--login") {
+    await page.goto('https://www.twitch.tv/dashboard/live');
+    await page.waitFor('div.top-nav-user-menu', {"timeout": 180000});
+    await browser.close();
+  } else {
+    var found = false;
+    page.on("request", async (req) => {
+      if (req._url == "https://gql.twitch.tv/gql" && !found) {
+        found = true;
+        console.log(JSON.stringify({
+          "client-id": req._headers["client-id"],
+          //"token": req._headers["authorization"].slice(0, 20).replace("OAuth ", "")
+          "token": req._headers["authorization"].replace("OAuth ", "")
+        }));
+        await browser.close();
+        process.exit(0);
+      }
+    })
+    await page.goto('https://www.twitch.tv/dashboard/live');
+    await new Promise(res => setTimeout(res, 5000));
+  }
+})();
+  

@@ -39,17 +39,17 @@ const (
 var profiles = []Profile{
 	{
 		Name:        "tigl3d",
-		Tag:         "[TIGL3D]",
+		Tag:         "tigl3d",
 		Communities: []string{CommunityProgramming, CommunityUnity3D, CommunityGameDevelopment},
 	},
 	{
-		Name:        "gcl",
-		Tag:         "[GCL]",
+		Name:        "workbench",
+		Tag:         "workbench",
 		Communities: []string{CommunityProgramming, CommunityGolang, CommunityOpensource},
 	},
 	{
 		Name:        "music",
-		Tag:         "[Music]",
+		Tag:         "music",
 		Communities: []string{CommunityMusic, CommunityLogicPro},
 	},
 }
@@ -143,14 +143,14 @@ func main() {
 	for _, p := range profiles {
 		if p.Name == profile {
 			if status == "" {
-				event, _ := NextEvent(ProgriumChannelID, "#"+p.Name)
+				event, _ := NextEvent(ProgriumChannelID, "#"+p.Tag)
 				if event.Title != "" {
 					status = event.Title
 				} else {
 					log.Fatal("enter status or make sure event exists")
 				}
 			}
-			fullStatus := fmt.Sprintf("%s %s", status, p.Tag)
+			fullStatus := fmt.Sprintf("%s [%s]", status, p.Tag)
 
 			// Update YouTube
 			broadcast, err := GetDefaultBroadcast()

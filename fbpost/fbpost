@@ -1,0 +1,21 @@
+#!/usr/bin/env node
+(async() => {
+  const arg = process.argv[2];
+  const puppeteer = require('puppeteer');
+  const browser = await puppeteer.launch({
+    headless: (arg !== "--login"),
+    userDataDir: "data"
+  });
+  const page = (await browser.pages())[0];
+  await page.goto('https://www.facebook.com');
+  if (arg === "--login") {
+    await page.waitFor('div[aria-label="Create a post"]', {"timeout": 180000});
+  } else {
+    await page.keyboard.press('KeyP');
+    await page.waitFor('div[aria-label="Create a post"] a[aria-label="Insert an emoji"]')
+    await page.keyboard.type(arg);
+    await page.click('div[aria-label="Create a post"] button[type=submit]');  
+    await new Promise(res => setTimeout(res, 2000));
+  }
+  await browser.close();
+})();
