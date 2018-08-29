@@ -6,16 +6,23 @@ import (
 	"time"
 
 	"github.com/jinzhu/now"
+	"github.com/machinebox/graphql"
 	"github.com/mitchellh/hashstructure"
+	twitch "github.com/progrium/workbench/twitch-api"
 
 	"github.com/adlio/trello"
 )
 
+const CreativeGameID = "488191"
+
 var (
-	zeroTime  = time.Date(0, 0, 0, 0, 0, 0, 0, tz)
-	tz        = time.Now().Location()
-	tagLabels = []string{"tigl3d", "workbench"}
-	schedule  = map[string][]Slot{
+	zeroTime = time.Date(0, 0, 0, 0, 0, 0, 0, tz)
+	tz       = time.Now().Location()
+	series   = map[string]string{
+		"tigl3d":    "CruZjy5IS7e6JKgQxW2SEQ",
+		"workbench": "Fms5J2-TRVWr7Cs-wOcdGQ",
+	}
+	schedule = map[string][]Slot{
 		"workbench": []Slot{
 			{
 				time.Tuesday,
@@ -76,19 +83,43 @@ func main() {
 		}
 	}
 	trelloHash := HashEvents(events)
+	var deletedCardIDs []string
 	if state.TrelloHash != trelloHash {
 		resync = true
+		for k, _ := range state.Mapping {
+			found := false
+			for _, e := range events {
+				if e.ID == k {
+					found = true
+					break
+				}
+			}
+			if !found {
+				deletedCardIDs = append(deletedCardIDs, k)
+			}
+		}
 	}
 
-	twitch, err := LoadTwitchMock()
-	fatal(err)
+	twitchapi := &twitch.TwitchAPI{
+		Client:    graphql.NewClient("https://gql.twitch.tv/gql"),
+		ChannelID: "5031651",
+	}
+	fatal(twitchapi.Authenticate("../twitch-api/auth/gql-auth"))
 	for id, hash := range state.TwitchHashes {
-		e, _ := twitch.EventByID(id)
+		e, _ := twitchapi.EventByID(id)
 		if hash != HashTwitchEvent(e) {
 			resync = true
 			break
 		}
 	}
+
+	// tevents, err := twitchapi.NewEvents()
+	// fatal(err)
+	// fmt.Println(tevents)
+	// for _, e := range tevents {
+	// 	twitchapi.DeleteEvent(e.ID)
+	// }
+	// return
 
 	now.WeekStartDay = time.Monday
 	thisWeek := now.BeginningOfWeek()
@@ -97,66 +128,71 @@ func main() {
 	if resync {
 		fmt.Println("Resyncing...")
 		state.TrelloHash = trelloHash
+		if len(deletedCardIDs) > 0 {
+			fmt.Println(" - Deleting unmapped events")
+		}
+		for _, id := range deletedCardIDs {
+			fatal(twitchapi.DeleteEvent(state.Mapping[id]))
+			delete(state.Mapping, id)
+		}
 		var event *Event
 		for _, weekBegin := range []time.Time{thisWeek, nextWeek} {
 			for tag, slots := range schedule {
 				for _, slot := range slots {
-					if slot.EndTime(weekBegin).Before(time.Now()) {
+					if slot.StartTime(weekBegin).Before(time.Now()) {
 						continue
 					}
 					event, events = ShiftEvent(events, tag)
 					if event == nil {
 						continue
 					}
-					twitchEvent, _ := twitch.EventAt(slot.StartTime(weekBegin))
-					var err error
-					if twitchEvent == nil {
+					findEvent, err := twitchapi.EventAt(slot.StartTime(weekBegin))
+					fatal(err)
+					replaceEvent := &twitch.Event{
+						Title:       event.Name,
+						Description: event.Description + "\n#" + tag,
+						StartTime:   slot.StartTime(weekBegin),
+						EndTime:     slot.EndTime(weekBegin),
+						SeriesID:    series[tag],
+						GameID:      CreativeGameID,
+					}
+					if findEvent == nil {
 						fmt.Println("NEW:", event.Name)
-						twitchEvent, err = twitch.Post(TwitchEvent{
-							Title:       event.Name,
-							Description: event.Description + "\n#" + tag,
-							StartTime:   slot.StartTime(weekBegin),
-							EndTime:     slot.EndTime(weekBegin),
-						})
-						fatal(err)
+						fatal(twitchapi.CreateEvent(replaceEvent))
 					} else {
 						fmt.Println("MOD:", event.Name)
-						twitchEvent, err = twitch.Put(twitchEvent.ID, TwitchEvent{
-							Title:       event.Name,
-							Description: event.Description + "\n#" + tag,
-							StartTime:   slot.StartTime(weekBegin),
-							EndTime:     slot.EndTime(weekBegin),
-						})
-						fatal(err)
+						fatal(twitchapi.UpdateEvent(findEvent.ID, replaceEvent))
 					}
-					state.TwitchHashes[twitchEvent.ID] = HashTwitchEvent(twitchEvent)
-					state.Mapping[event.ID] = twitchEvent.ID
+					state.TwitchHashes[replaceEvent.ID] = HashTwitchEvent(replaceEvent)
+					state.Mapping[event.ID] = replaceEvent.ID
 				}
 			}
 		}
 
 	}
 
-	EnsureSlotEvents(twitch, thisWeek)
-	EnsureSlotEvents(twitch, nextWeek)
+	EnsureSlotEvents(twitchapi, thisWeek)
+	EnsureSlotEvents(twitchapi, nextWeek)
 
-	fatal(SaveTwitchMock(twitch))
 	fatal(SaveState(state))
 }
 
-func EnsureSlotEvents(twitch TwitchAPI, weekBegin time.Time) {
+func EnsureSlotEvents(api TwitchAPI, weekBegin time.Time) {
 	for tag, slots := range schedule {
 		for _, slot := range slots {
-			if slot.EndTime(weekBegin).Before(time.Now()) {
+			if slot.StartTime(weekBegin).Before(time.Now()) {
 				continue
 			}
-			e, _ := twitch.EventAt(slot.StartTime(weekBegin))
+			e, err := api.EventAt(slot.StartTime(weekBegin))
+			fatal(err)
 			if e == nil {
-				twitch.Post(TwitchEvent{
+				api.CreateEvent(&twitch.Event{
 					Title:       "TBD",
 					Description: "#" + tag,
 					StartTime:   slot.StartTime(weekBegin),
 					EndTime:     slot.EndTime(weekBegin),
+					SeriesID:    series[tag],
+					GameID:      CreativeGameID,
 				})
 			}
 		}
@@ -186,7 +222,7 @@ func HashEvents(events []Event) string {
 	return fmt.Sprintf("%x", hash)
 }
 
-func HashTwitchEvent(event *TwitchEvent) string {
+func HashTwitchEvent(event *twitch.Event) string {
 	hash, err := hashstructure.Hash(event, nil)
 	if err != nil {
 		panic(err)

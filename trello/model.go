@@ -3,7 +3,6 @@ package main
 import (
 	"encoding/json"
 	"io/ioutil"
-	"strings"
 	"time"
 
 	"github.com/adlio/trello"
@@ -21,7 +20,7 @@ func NewEvent(card *trello.Card) Event {
 	labels := LabelNames(card.Labels)
 	var tagIdx *int
 	for i, l := range labels {
-		for _, tl := range tagLabels {
+		for tl, _ := range series {
 			if l == tl {
 				tagIdx = &i
 			}
@@ -53,14 +52,6 @@ type TwitchEvent struct {
 	Description string
 	StartTime   time.Time
 	EndTime     time.Time
-}
-
-func (e *TwitchEvent) Tag() string {
-	parts := strings.Split(e.Description, "#")
-	if len(parts) < 2 {
-		return ""
-	}
-	return parts[1]
 }
 
 type Slot struct {

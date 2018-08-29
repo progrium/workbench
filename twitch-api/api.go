@@ -1,4 +1,4 @@
-package main
+package twitch
 
 import (
 	"context"
@@ -6,77 +6,36 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
-	"log"
 	"net/http"
 	"os"
 	"os/exec"
+	"strings"
 	"time"
 
 	"github.com/machinebox/graphql"
 )
 
-// type TwitchAPI interface {
-// 	FutureEvents() ([]TwitchEvent, error)
-// 	EventAt(t time.Time) (*TwitchEvent, error)
-// 	EventByID(id string) (*TwitchEvent, error)
-// 	Post(e TwitchEvent) (*TwitchEvent, error)
-// 	Delete(id string) error
-// 	Put(id string, e TwitchEvent) (*TwitchEvent, error)
-// }
-
-// type TwitchEvent struct {
-// 	ID          string
-// 	Title       string
-// 	Description string
-// 	StartTime   time.Time
-// 	EndTime     time.Time
-// }
-
-func fatal(err error) {
-	if err != nil {
-		log.Fatal(err)
-	}
-}
-
-func main() {
-	cmd := exec.Command("./auth/gql-auth")
-	out, err := cmd.CombinedOutput()
-	fatal(err)
-	var auth map[string]string
-	fatal(json.Unmarshal(out, &auth))
-
-	api := &TwitchAPI{
-		client:    graphql.NewClient("https://gql.twitch.tv/gql"),
-		clientID:  auth["client-id"],
-		token:     auth["token"],
-		channelID: "5031651",
-	}
-
-	events, _ := api.FutureEvents()
-	fmt.Println(events)
-
-	// e := Event{
-	// 	Title:       "New test event",
-	// 	Description: "Here is a description",
-	// 	StartTime:   time.Now().Add(48 * time.Hour),
-	// 	EndTime:     time.Now().Add(50 * time.Hour),
-	// }
-	// _, err = api.Post(e)
-	// fatal(err)
-
-	fatal(api.Delete("23nl853ITbSXw2VniEND_w"))
-	fatal(api.Delete("kUmt6nwqQyOsIPLS64zmwA"))
-	fatal(api.Delete("485Ij4deROeuXwEdOMwb6w"))
-
-	// events, _ = api.FutureEvents()
-	// fmt.Println(events)
-}
-
 type TwitchAPI struct {
-	client    *graphql.Client
-	clientID  string
-	token     string
-	channelID string
+	Client    *graphql.Client
+	ChannelID string
+
+	clientID string
+	token    string
+}
+
+func (api *TwitchAPI) Authenticate(authTool string) error {
+	cmd := exec.Command(authTool)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return err
+	}
+	var auth map[string]string
+	if err := json.Unmarshal(out, &auth); err != nil {
+		return err
+	}
+	api.token = auth["token"]
+	api.clientID = auth["client-id"]
+	return nil
 }
 
 func (api *TwitchAPI) makeRequest(query string) *graphql.Request {
@@ -86,20 +45,20 @@ func (api *TwitchAPI) makeRequest(query string) *graphql.Request {
 	return req
 }
 
-func (api *TwitchAPI) FutureEvents() ([]Event, error) {
-	return FetchEvents(api.channelID)
-}
+// func (api *TwitchAPI) FutureEvents() ([]Event, error) {
+// 	return FetchEvents(api.ChannelID)
+// }
 func (api *TwitchAPI) EventAt(t time.Time) (*Event, error) {
 	events, err := api.FutureEvents()
 	if err != nil {
 		return nil, err
 	}
 	for _, event := range events {
-		if event.StartTime.Equal(t) {
+		if event.StartTime.Equal(t.UTC()) {
 			return &event, nil
 		}
 	}
-	return nil, fmt.Errorf("event not found")
+	return nil, nil
 }
 func (api *TwitchAPI) EventByID(id string) (*Event, error) {
 	events, err := api.FutureEvents()
@@ -111,37 +70,39 @@ func (api *TwitchAPI) EventByID(id string) (*Event, error) {
 			return &event, nil
 		}
 	}
-	return nil, fmt.Errorf("event not found")
+	return nil, nil
 }
 
-func (api *TwitchAPI) Post(e Event) (*Event, error) {
+func (api *TwitchAPI) CreateEvent(e *Event) error {
 	req := api.makeRequest(`
-		mutation($input: CreateSingleEventInput!) {
-			createSingleEvent(input: $input) {
+		mutation($input: CreateSegmentEventInput!) {
+			createSegmentEvent(input: $input) {
 				event {
 					id
 				}
 			}
 		}
 	`)
-	req.Var("input", GQLEvent{
-		ChannelID:   api.channelID,
+	req.Var("input", gqlEvent{
+		ChannelID:   api.ChannelID,
 		Title:       e.Title,
 		Description: e.Description,
 		StartAt:     e.StartTime.UTC().Format(time.RFC3339),
 		EndAt:       e.EndTime.UTC().Format(time.RFC3339),
-		GameID:      "488191",
-		OwnerID:     "5031651",
+		GameID:      e.GameID,
+		OwnerID:     api.ChannelID,
+		ParentID:    e.SeriesID,
 	})
-	var resp map[string]interface{}
-	err := api.client.Run(context.Background(), req, &resp)
+	var resp map[string]map[string]map[string]interface{}
+	err := api.Client.Run(context.Background(), req, &resp)
 	if err != nil {
-		return nil, err
+		return err
 	}
-	return &e, nil
+	e.ID = resp["createSegmentEvent"]["event"]["id"].(string)
+	return nil
 }
 
-func (api *TwitchAPI) Delete(id string) error {
+func (api *TwitchAPI) DeleteEvent(id string) error {
 	req := api.makeRequest(`
 		mutation($input: DeleteEventLeafInput!) {
 			deleteEventLeaf(input: $input) {
@@ -153,36 +114,131 @@ func (api *TwitchAPI) Delete(id string) error {
 	`)
 	req.Var("input", map[string]string{"eventID": id})
 	var resp map[string]interface{}
-	err := api.client.Run(context.Background(), req, &resp)
+	err := api.Client.Run(context.Background(), req, &resp)
 	if err != nil {
 		return err
 	}
 	return nil
 }
 
-func (api *TwitchAPI) Put(id string, e Event) (*Event, error) {
+func (api *TwitchAPI) FutureEvents() ([]Event, error) {
+	req := api.makeRequest(`query Events($criteria: ManagedEventLeavesCriteriaInput) {
+		currentUser {
+			managedEventLeaves(first: 100, criteria: $criteria) {
+				edges {
+					node {
+						channel {
+							id
+						},
+						createdAt,
+						defaultTimeZone,
+						description,
+						endAt,
+						game {
+							id
+						},
+						imageURL,
+						id,
+						owner {
+							id
+						},
+						parent{
+							id
+						},
+						startAt,
+						title,
+						type
+					}
+				}
+			}
+		}
+	}`)
+	req.Var("criteria", criteria{
+		StartsAfter: time.Now().UTC().Format(time.RFC3339),
+	})
+	var resp eventsResponse
+	err := api.Client.Run(context.Background(), req, &resp)
+	if err != nil {
+		return nil, err
+	}
+	var events []Event
+	for _, edge := range resp.CurrentUser.ManagedEventLeaves.Edges {
+		events = append(events, Event{
+			Title:       edge.Node.Title,
+			ID:          edge.Node.ID,
+			Description: edge.Node.Description,
+			StartTime:   edge.Node.StartAt,
+			EndTime:     edge.Node.EndAt,
+			SeriesID:    edge.Node.Parent.ID,
+			GameID:      edge.Node.Game.ID,
+		})
+	}
+	return events, nil
+}
+
+type criteria struct {
+	StartsAfter string `json:"startsAfter"`
+}
+
+type eventsResponse struct {
+	CurrentUser struct {
+		ManagedEventLeaves struct {
+			Edges []struct {
+				Node struct {
+					Channel struct {
+						ID string `json:"id"`
+					} `json:"channel"`
+					CreatedAt       time.Time `json:"createdAt"`
+					DefaultTimeZone string    `json:"defaultTimeZone"`
+					Description     string    `json:"description"`
+					EndAt           time.Time `json:"endAt"`
+					Game            struct {
+						ID string `json:"id"`
+					} `json:"game"`
+					ImageURL string `json:"imageURL"`
+					ID       string `json:"id"`
+					Owner    struct {
+						ID string `json:"id"`
+					} `json:"owner"`
+					Parent struct {
+						ID string `json:"id"`
+					} `json:"parent"`
+					StartAt time.Time `json:"startAt"`
+					Title   string    `json:"title"`
+					Type    string    `json:"type"`
+				} `json:"node"`
+			} `json:"edges"`
+		} `json:"managedEventLeaves"`
+	} `json:"currentUser"`
+}
+
+func (api *TwitchAPI) UpdateEvent(id string, e *Event) error {
 	req := api.makeRequest(`
-		mutation($input: UpdateSingleEventInput!) {
-			updateSingleEvent(input: $input) {
+		mutation($input: UpdateSegmentEventInput!) {
+			updateSegmentEvent(input: $input) {
 				event {
 					id
 				}
 			}
 	  	}
 	`)
-	req.Var("input", GQLEvent{
+	req.Var("input", gqlEvent{
 		ID:          id,
-		ChannelID:   api.channelID,
+		ChannelID:   api.ChannelID,
 		Title:       e.Title,
 		Description: e.Description,
-		GameID:      "488191",
+		GameID:      e.GameID,
+		ParentID:    e.SeriesID,
+		StartAt:     e.StartTime.UTC().Format(time.RFC3339),
+		EndAt:       e.EndTime.UTC().Format(time.RFC3339),
 	})
 	var resp map[string]interface{}
-	err := api.client.Run(context.Background(), req, &resp)
+	err := api.Client.Run(context.Background(), req, &resp)
 	if err != nil {
-		return nil, err
+		return err
 	}
-	return &e, nil
+	e.ID = id
+	return nil
 }
 
 type EventsResponse struct {
@@ -195,9 +251,19 @@ type Event struct {
 	Description string    `json:"description"`
 	StartTime   time.Time `json:"start_time"`
 	EndTime     time.Time `json:"end_time"`
+	SeriesID    string
+	GameID      string
 }
 
-type GQLEvent struct {
+func (e *Event) Tag() string {
+	parts := strings.Split(e.Description, "#")
+	if len(parts) < 2 {
+		return ""
+	}
+	return parts[1]
+}
+
+type gqlEvent struct {
 	ID          string `json:"id,omitempty"`
 	ChannelID   string `json:"channelID"`
 	Title       string `json:"title"`
@@ -206,6 +272,7 @@ type GQLEvent struct {
 	StartAt     string `json:"startAt"`
 	GameID      string `json:"gameID"`
 	OwnerID     string `json:"ownerID"`
+	ParentID    string `json:"parentID"`
 }
 
 func FetchEvents(channelID string) ([]Event, error) {
@@ -213,12 +280,12 @@ func FetchEvents(channelID string) ([]Event, error) {
 	if err != nil {
 		return nil, err
 	}
-	var resp EventsResponse
-	_, err = Do(req, &resp)
+	var payload EventsResponse
+	_, err = Do(req, &payload)
 	if err != nil {
 		return nil, err
 	}
-	return resp.Events, err
+	return payload.Events, err
 }
 
 func Do(req *http.Request, r interface{}) (*http.Response, error) {

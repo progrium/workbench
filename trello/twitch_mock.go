@@ -6,23 +6,25 @@ import (
 	"io/ioutil"
 	"sort"
 	"time"
+
+	"github.com/progrium/workbench/twitch-api"
 )
 
 type TwitchAPI interface {
-	FutureEvents() ([]TwitchEvent, error)
-	EventAt(t time.Time) (*TwitchEvent, error)
-	EventByID(id string) (*TwitchEvent, error)
-	Post(e TwitchEvent) (*TwitchEvent, error)
-	Delete(id string) error
-	Put(id string, e TwitchEvent) (*TwitchEvent, error)
+	FutureEvents() ([]twitch.Event, error)
+	EventAt(t time.Time) (*twitch.Event, error)
+	EventByID(id string) (*twitch.Event, error)
+	CreateEvent(e *twitch.Event) error
+	DeleteEvent(id string) error
+	UpdateEvent(id string, e *twitch.Event) error
 }
 
 type TwitchAPIMock struct {
-	Events []TwitchEvent
+	Events []twitch.Event
 }
 
-func (ft *TwitchAPIMock) FutureEvents() ([]TwitchEvent, error) {
-	var events []TwitchEvent
+func (ft *TwitchAPIMock) FutureEvents() ([]twitch.Event, error) {
+	var events []twitch.Event
 	for _, event := range ft.Events {
 		if event.StartTime.After(time.Now()) {
 			events = append(events, event)
@@ -32,16 +34,16 @@ func (ft *TwitchAPIMock) FutureEvents() ([]TwitchEvent, error) {
 	return events, nil
 }
 
-func (ft *TwitchAPIMock) EventAt(t time.Time) (*TwitchEvent, error) {
+func (ft *TwitchAPIMock) EventAt(t time.Time) (*twitch.Event, error) {
 	for _, event := range ft.Events {
-		if event.StartTime == t {
+		if event.StartTime.Equal(t) {
 			return &event, nil
 		}
 	}
 	return nil, fmt.Errorf("not found")
 }
 
-func (ft *TwitchAPIMock) EventByID(id string) (*TwitchEvent, error) {
+func (ft *TwitchAPIMock) EventByID(id string) (*twitch.Event, error) {
 	for _, event := range ft.Events {
 		if event.ID == id {
 			return &event, nil
@@ -50,13 +52,13 @@ func (ft *TwitchAPIMock) EventByID(id string) (*TwitchEvent, error) {
 	return nil, fmt.Errorf("not found: %s", id)
 }
 
-func (ft *TwitchAPIMock) Post(e TwitchEvent) (*TwitchEvent, error) {
+func (ft *TwitchAPIMock) CreateEvent(e *twitch.Event) error {
 	e.ID = RandomString(10)
-	ft.Events = append(ft.Events, e)
-	return &e, nil
+	ft.Events = append(ft.Events, *e)
+	return nil
 }
 
-func (ft *TwitchAPIMock) Delete(id string) error {
+func (ft *TwitchAPIMock) DeleteEvent(id string) error {
 	var idx *int
 	for i, e := range ft.Events {
 		if e.ID == id {
@@ -71,7 +73,7 @@ func (ft *TwitchAPIMock) Delete(id string) error {
 	return nil
 }
 
-func (ft *TwitchAPIMock) Put(id string, e TwitchEvent) (*TwitchEvent, error) {
+func (ft *TwitchAPIMock) UpdateEvent(id string, e *twitch.Event) error {
 	var idx *int
 	for i, ee := range ft.Events {
 		if ee.ID == id {
@@ -80,11 +82,11 @@ func (ft *TwitchAPIMock) Put(id string, e TwitchEvent) (*TwitchEvent, error) {
 		}
 	}
 	if idx == nil {
-		return nil, fmt.Errorf("not found: %s", id)
+		return fmt.Errorf("not found: %s", id)
 	}
 	e.ID = id
-	ft.Events[*idx] = e
-	return &e, nil
+	ft.Events[*idx] = *e
+	return nil
 }
 
 func LoadTwitchMock() (*TwitchAPIMock, error) {
