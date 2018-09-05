@@ -1,34 +1,41 @@
-//+build ignore
-
-// Copyright 2015 The TCell Authors
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use file except in compliance with the License.
-// You may obtain a copy of the license at
-//
-//    http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
-
-// mouse displays a text box and tests mouse interaction.  As you click
-// and drag, boxes are displayed on screen.  Other events are reported in
-// the box.  Press ESC twice to exit the program.
 package main
 
 import (
 	"fmt"
+	"io"
+	"log"
 	"os"
+	"syscall"
 
-	"github.com/gdamore/tcell"
+	"github.com/gliderlabs/ssh"
+	"github.com/kr/pty"
+	"github.com/progrium/tcell"
 
 	"github.com/mattn/go-runewidth"
 )
 
 var defStyle tcell.Style
+
+type sshDriver struct {
+	winWidth  int
+	winHeight int
+	winCh     chan os.Signal
+	ptmx      *os.File
+}
+
+func (d *sshDriver) Init(winCh chan os.Signal) (*os.File, *os.File, error) {
+	ptmx, tty, err := pty.Open()
+	if err != nil {
+		return nil, nil, err
+	}
+	d.ptmx = ptmx
+	d.winCh = winCh
+	return tty, tty, nil
+}
+func (d *sshDriver) Fini() {}
+func (d *sshDriver) WinSize() (int, int, error) {
+	return d.winWidth, d.winHeight, nil
+}
 
 func emitStr(s tcell.Screen, x, y int, style tcell.Style, str string) {
 	for _, c := range str {
@@ -74,17 +81,50 @@ func drawBox(s tcell.Screen, x1, y1, x2, y2 int, style tcell.Style, r rune) {
 	}
 }
 
-func main() {
+type DriverSetter interface {
+	SetDriver(tcell.TermDriver)
+}
 
-	s, e := tcell.NewScreen()
-	if e != nil {
-		fmt.Fprintf(os.Stderr, "%v\n", e)
-		os.Exit(1)
-	}
-	if e := s.Init(); e != nil {
-		fmt.Fprintf(os.Stderr, "%v\n", e)
-		os.Exit(1)
-	}
+func main() {
+	ssh.Handle(func(s ssh.Session) {
+		sshPty, winCh, isPty := s.Pty()
+		if !isPty {
+			return
+		}
+		driver := &sshDriver{}
+		driver.winWidth = sshPty.Window.Width
+		driver.winHeight = sshPty.Window.Height
+		screen, e := tcell.NewTerminfoScreen()
+		if e != nil {
+			fmt.Fprintf(os.Stderr, "%v\n", e)
+			return
+		}
+		dset, ok := screen.(DriverSetter)
+		if !ok {
+			log.Fatal("Unable to set tcell driver")
+			return
+		}
+		dset.SetDriver(driver)
+		if e := screen.Init(); e != nil {
+			fmt.Fprintf(os.Stderr, "%v\n", e)
+			return
+		}
+		go termLoop(screen, s)
+		go func() {
+			for win := range winCh {
+				driver.winWidth = win.Width
+				driver.winHeight = win.Height
+				driver.winCh <- syscall.SIGWINCH
+			}
+		}()
+		go func() { _, _ = io.Copy(driver.ptmx, s) }()
+		_, _ = io.Copy(s, driver.ptmx)
+	})
+
+	log.Fatal(ssh.ListenAndServe(":2222", nil))
+}
+
+func termLoop(s tcell.Screen, sess ssh.Session) {
 	defStyle = tcell.StyleDefault.
 		Background(tcell.ColorBlack).
 		Foreground(tcell.ColorWhite)
@@ -114,7 +154,7 @@ func main() {
 			s.SetContent(w-1, h-1, 'K', nil, st)
 			if ev.Key() == tcell.KeyEscape {
 				s.Fini()
-				os.Exit(0)
+				sess.Exit(0)
 			} else if ev.Key() == tcell.KeyCtrlL {
 				s.Sync()
 			} else {
