@@ -25,7 +25,7 @@ import (
 const (
 	ProgriumChannelID = "5031651"
 
-	StreamNowDescription = "Chat here is ignored, please chat on Twitch: https://twitch.tv/progrium"
+	StreamNowDescription = "Chat with me on Twitch: https://twitch.tv/progrium"
 
 	CommunityGolang          = "003860d3-270f-4082-a8f7-b1aa926272f4"
 	CommunityOpensource      = "4ca22a66-fbfe-4b82-8433-40b9509bc913"
@@ -38,26 +38,30 @@ const (
 
 var profiles = []Profile{
 	{
-		Name:        "tigl3d",
-		Tag:         "tigl3d",
-		Communities: []string{CommunityProgramming, CommunityUnity3D, CommunityGameDevelopment},
+		Name:         "tigl3d",
+		Tag:          "tigl3d",
+		Notification: "Jeff is working on TIGL3D",
+		Communities:  []string{CommunityProgramming, CommunityUnity3D, CommunityGameDevelopment},
 	},
 	{
-		Name:        "workbench",
-		Tag:         "workbench",
-		Communities: []string{CommunityProgramming, CommunityGolang, CommunityOpensource},
+		Name:         "workbench",
+		Tag:          "workbench",
+		Notification: "Jeff is working on cool projects",
+		Communities:  []string{CommunityProgramming, CommunityGolang, CommunityOpensource},
 	},
 	{
-		Name:        "music",
-		Tag:         "music",
-		Communities: []string{CommunityMusic, CommunityLogicPro},
+		Name:         "music",
+		Tag:          "music",
+		Notification: "Jeff is working on music",
+		Communities:  []string{CommunityMusic, CommunityLogicPro},
 	},
 }
 
 type Profile struct {
-	Name        string
-	Tag         string
-	Communities []string
+	Name         string
+	Tag          string
+	Notification string
+	Communities  []string
 }
 
 type ChannelUpdate struct {
@@ -89,7 +93,26 @@ func UpdateChannel(channelID string, update ChannelUpdate) error {
 		return err
 	}
 	var resp map[string]interface{}
-	_, err = Do(req, &resp)
+	_, err = Do(req, &resp, false)
+	return err
+}
+
+func UpdateCustomNotification(userID string, message string) error {
+	msg := map[string]string{
+		"notification_type": "streamup",
+		"message":           message,
+	}
+	buf := new(bytes.Buffer)
+	err := json.NewEncoder(buf).Encode(&msg)
+	if err != nil {
+		return err
+	}
+	req, err := http.NewRequest("PUT", fmt.Sprintf("https://api.twitch.tv/kraken/users/%s/notifications/custom", userID), buf)
+	if err != nil {
+		return err
+	}
+	var resp map[string]interface{}
+	_, err = Do(req, &resp, true)
 	return err
 }
 
@@ -106,7 +129,7 @@ func UpdateChannelCommunities(channelID string, communityIDs ...string) error {
 		return err
 	}
 	var resp map[string]interface{}
-	_, err = Do(req, &resp)
+	_, err = Do(req, &resp, false)
 	return err
 }
 
@@ -116,7 +139,7 @@ func FetchEvents(channelID string) ([]Event, error) {
 		return nil, err
 	}
 	var resp EventsResponse
-	_, err = Do(req, &resp)
+	_, err = Do(req, &resp, false)
 	if err != nil {
 		return nil, err
 	}
@@ -178,6 +201,10 @@ func main() {
 			if err != nil {
 				log.Fatal(err)
 			}
+			err = UpdateCustomNotification(ProgriumChannelID, p.Notification)
+			if err != nil {
+				log.Fatal(err)
+			}
 			fmt.Println("OK:", fullStatus)
 			return
 		}
@@ -185,11 +212,25 @@ func main() {
 	log.Fatal("profile not found")
 }
 
-func Do(req *http.Request, r interface{}) (*http.Response, error) {
+func Do(req *http.Request, r interface{}, firstParty bool) (*http.Response, error) {
 	req.Header.Set("Accept", "application/vnd.twitchtv.v5+json")
 	req.Header.Set("User-Agent", "progrium")
-	req.Header.Set("Client-ID", "tf99t1lw9dcsxpprca8h4uwew53yos")
-	req.Header.Set("Authorization", "OAuth "+os.Getenv("TWITCH_OAUTH_TOKEN"))
+	if firstParty {
+		cmd := exec.Command("../twitch-api/auth/gql-auth")
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			return nil, err
+		}
+		var auth map[string]string
+		if err := json.Unmarshal(out, &auth); err != nil {
+			return nil, err
+		}
+		req.Header.Set("Client-ID", auth["client-id"])
+		req.Header.Set("Authorization", "OAuth "+auth["token"])
+	} else {
+		req.Header.Set("Client-ID", "tf99t1lw9dcsxpprca8h4uwew53yos")
+		req.Header.Set("Authorization", "OAuth "+os.Getenv("TWITCH_OAUTH_TOKEN"))
+	}
 	if req.Body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
@@ -321,11 +362,12 @@ func getTokenFromWeb(config *oauth2.Config) *oauth2.Token {
 		codeCh <- r.URL.Query().Get("code")
 	})
 	h := &http.Server{Addr: ":8080", Handler: mux}
-	authURL := config.AuthCodeURL("state-token", oauth2.AccessTypeOffline)
+	authURL := config.AuthCodeURL("state-token", oauth2.AccessTypeOffline, oauth2.SetAuthURLParam("prompt", "consent"))
 	// fmt.Printf("Go to the following link in your browser then type the "+
 	// 	"authorization code: \n%v\n", authURL)
 	go h.ListenAndServe()
 
+	fmt.Println(authURL)
 	openURL(authURL)
 
 	authCode := <-codeCh

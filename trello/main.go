@@ -71,6 +71,38 @@ func main() {
 	fatal(err)
 	lists, err := board.GetLists(trello.Defaults())
 	fatal(err)
+
+	twitchapi := &twitch.TwitchAPI{
+		Client:    graphql.NewClient("https://gql.twitch.tv/gql"),
+		ChannelID: "5031651",
+	}
+	fatal(twitchapi.Authenticate("../twitch-api/auth/gql-auth"))
+
+	futureEvents, err := twitchapi.FutureEvents()
+	fatal(err)
+
+	var pastEventCardIDs []string
+	for cardID, twitchID := range state.Mapping {
+		found := false
+		for _, event := range futureEvents {
+			if event.ID == twitchID {
+				found = true
+			}
+		}
+		if !found {
+			pastEventCardIDs = append(pastEventCardIDs, cardID)
+			resync = true
+		}
+	}
+
+	for id, hash := range state.TwitchHashes {
+		e, _ := twitchapi.EventByID(id)
+		if hash != HashTwitchEvent(e) {
+			resync = true
+			break
+		}
+	}
+
 	var events []Event
 	for _, l := range lists {
 		if l.Name == "Schedule" {
@@ -82,6 +114,7 @@ func main() {
 			break
 		}
 	}
+
 	trelloHash := HashEvents(events)
 	var deletedCardIDs []string
 	if state.TrelloHash != trelloHash {
@@ -100,19 +133,6 @@ func main() {
 		}
 	}
 
-	twitchapi := &twitch.TwitchAPI{
-		Client:    graphql.NewClient("https://gql.twitch.tv/gql"),
-		ChannelID: "5031651",
-	}
-	fatal(twitchapi.Authenticate("../twitch-api/auth/gql-auth"))
-	for id, hash := range state.TwitchHashes {
-		e, _ := twitchapi.EventByID(id)
-		if hash != HashTwitchEvent(e) {
-			resync = true
-			break
-		}
-	}
-
 	// tevents, err := twitchapi.NewEvents()
 	// fatal(err)
 	// fmt.Println(tevents)
@@ -128,12 +148,30 @@ func main() {
 	if resync {
 		fmt.Println("Resyncing...")
 		state.TrelloHash = trelloHash
+
 		if len(deletedCardIDs) > 0 {
 			fmt.Println(" - Deleting unmapped events")
 		}
 		for _, id := range deletedCardIDs {
-			fatal(twitchapi.DeleteEvent(state.Mapping[id]))
+			for _, event := range futureEvents {
+				if event.ID == state.Mapping[id] {
+					fmt.Printf("   x %s\n", event.Title)
+					fatal(twitchapi.DeleteEvent(state.Mapping[id]))
+				}
+			}
 			delete(state.Mapping, id)
+		}
+
+		if len(pastEventCardIDs) > 0 {
+			fmt.Println(" - Deleting past event cards")
+			for _, id := range pastEventCardIDs {
+				card, err := client.GetCard(id, trello.Defaults())
+				fatal(err)
+				fmt.Printf("   x %s\n", card.Name)
+				fatal(card.Update(trello.Arguments{
+					"closed": "true",
+				}))
+			}
 		}
 		var event *Event
 		for _, weekBegin := range []time.Time{thisWeek, nextWeek} {

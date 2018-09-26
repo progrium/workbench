@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>progrium.workbench.Workbenchd</string>
+    <key>EnvironmentVariables</key>
+    <dict>
+      <key>GOPATH</key>
+      <string>/Users/progrium</string>
+    </dict>
+    <key>WorkingDirectory</key>
+    <string>/Users/progrium/src/github.com/progrium/workbench/workbenchd</string>
+    <key>ProgramArguments</key>
+    <array>
+      <string>/usr/local/bin/go</string>
+      <string>run</string>
+      <string>./workbenchd.go</string>
+    </array>
+    <key>StandardOutPath</key>
+    <string>/Users/progrium/src/github.com/progrium/workbench/workbenchd/logs/stdout</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/progrium/src/github.com/progrium/workbench/workbenchd/logs/stderr</string>
+    <key>KeepAlive</key>
+    <true/>
+</dict>
+</plist>

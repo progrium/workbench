@@ -2,11 +2,9 @@ package main
 
 import (
 	"fmt"
-	"io"
 	"log"
 	"os"
 	"reflect"
-	"syscall"
 
 	"github.com/gdamore/tcell"
 	"github.com/gliderlabs/ssh"
@@ -100,40 +98,73 @@ func drawForm(form *tview.Form, obj *Object) {
 }
 
 func main() {
-	ssh.Handle(func(s ssh.Session) {
-		sshPty, winCh, isPty := s.Pty()
-		if !isPty {
-			return
-		}
-		driver := &sshDriver{}
-		driver.winWidth = sshPty.Window.Width
-		driver.winHeight = sshPty.Window.Height
-		driver.ready = make(chan bool)
-		screen, e := tcell.NewTerminfoScreen()
-		if e != nil {
-			fmt.Fprintf(os.Stderr, "%v\n", e)
-			return
-		}
-		dset, ok := screen.(DriverSetter)
-		if !ok {
-			log.Fatal("Unable to set tcell driver")
-			return
-		}
-		dset.SetDriver(driver)
-		go rungui(screen, s)
-		<-driver.ready
-		go func() {
-			for win := range winCh {
-				driver.winWidth = win.Width
-				driver.winHeight = win.Height
-				driver.winCh <- syscall.SIGWINCH
-			}
-		}()
-		go func() { _, _ = io.Copy(driver.ptmx, s) }()
-		_, _ = io.Copy(s, driver.ptmx)
+	// drawBox(screen, 1, 1, 42, 6, tcell.StyleDefault.
+	// 	Foreground(tcell.ColorWhite).Background(tcell.ColorRed), ' ')
+	tview.Styles.PrimitiveBackgroundColor = tcell.ColorNavy
+	app := tview.NewApplication()
+	//app.SetScreen(screen)
+	logView = tview.NewTextView()
+
+	objs := []*Object{
+		NewObject("Foobar", &Foobar{}),
+		NewObject("Bazqux", &Bazqux{}),
+	}
+
+	rows := tview.NewFlex()
+	columns := tview.NewFlex()
+	list := tview.NewList()
+	form := tview.NewForm()
+
+	list.SetBorder(true).SetTitle("Objects")
+
+	for _, obj := range objs {
+		list.AddItem(obj.Name, "", 0, nil)
+	}
+	list.SetChangedFunc(func(idx int, _ string, _ string, _ rune) {
+		drawForm(form, objs[idx])
+		form.SetTitle(objs[idx].Name)
 	})
-	log.Println("listening on 2222...")
-	log.Fatal(ssh.ListenAndServe(":2222", nil))
+
+	columns.AddItem(list, 0, 1, true)
+
+	form.SetBorder(true)
+
+	columns.AddItem(form, 0, 2, false)
+
+	rows.SetDirection(tview.FlexRow)
+	rows.AddItem(columns, 0, 3, false)
+
+	logView.SetBorder(true)
+	rows.AddItem(logView, 0, 1, false)
+
+	app.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
+		if event.Key() == tcell.KeyLeft {
+			app.SetFocus(list)
+			app.Draw()
+			return nil
+		}
+		if event.Key() == tcell.KeyRight {
+			app.SetFocus(form)
+			app.Draw()
+			return nil
+		}
+		if event.Key() == tcell.KeyTab && app.GetFocus() == list {
+			app.SetFocus(form)
+			app.Draw()
+			return nil
+		}
+		if event.Key() == tcell.KeyEscape {
+			app.Stop()
+			os.Exit(0)
+			//sess.Exit(0)
+		}
+		return event
+	})
+
+	log.Println("About to run")
+	if err := app.SetRoot(rows, true).Run(); err != nil {
+		panic(err)
+	}
 }
 
 func rungui(screen tcell.Screen, sess ssh.Session) {

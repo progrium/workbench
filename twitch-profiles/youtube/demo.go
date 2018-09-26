@@ -125,7 +125,7 @@ func main() {
 	}
 
 	for _, b := range resp.Items {
-		b.Snippet.IsDefaultBroadcast
+		//b.Snippet.IsDefaultBroadcast
 		fmt.Println(b)
 	}
 	// 	playlistId := channel.ContentDetails.RelatedPlaylists.Uploads
