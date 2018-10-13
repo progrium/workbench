@@ -1,0 +1,209 @@
+<html>
+    <head>
+        <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/semantic-ui/2.3.3/semantic.min.css" />
+        <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/jstree/3.3.5/themes/default/style.min.css" />
+        <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/jqpropertygrid@1.0.0/jqPropertyGrid.css">
+
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.3.1/jquery.min.js"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/jqueryui/1.12.1/jquery-ui.min.js"></script>
+        
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/semantic-ui/2.3.3/semantic.min.js"></script>        
+
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/spectrum/1.8.0/spectrum.min.js"></script>
+        <link rel="stylesheet" type="text/css" href="https://cdnjs.cloudflare.com/ajax/libs/spectrum/1.8.0/spectrum.min.css">
+        
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/jstree/3.3.5/jstree.min.js"></script>
+        <script src="./jqPropertyGrid.js"></script>
+        <style>
+            #properties table {
+                width: 80%;
+            }
+            #properties tr.pgRow td:first-child {
+                width: 25%;
+            }
+        </style>
+    </head>
+    <body>
+        <div style="width: 20%; float: left;">
+            <button class="ui button" onclick="add()">Add</button>
+            <button class="ui button" onclick="reset()">Reset</button>
+            <div id="jstree_demo_div"></div>
+        </div>
+        <div id='properties' style="width: 50%; float: left;"></div>
+
+        <script>
+            function reset() {
+                localStorage.setItem("jstree", "[]");
+                window.location.reload();
+            }
+
+            var selectedId = "";
+
+            var loadData = [];
+            if (localStorage.getItem("jstree") && localStorage.getItem("jstree").length > 0) {
+                loadData = JSON.parse(localStorage.getItem("jstree")).map(el => {
+                    var original = JSON.parse(localStorage.getItem(el.id))
+                    for (let key of Object.keys(original)) { 
+                        el[key] = original[key]
+                    }
+                    return el
+                })
+            }
+
+            function saveData() {
+                var tree = $('#jstree_demo_div').jstree(true);
+                var data = tree.get_json(undefined, {flat: true});
+                if (data) {
+                    data.forEach((el) => {
+                        var orig = tree.get_node(el.id).original;
+                        orig.text = undefined;
+                        localStorage.setItem(el.id, JSON.stringify(orig));
+                    });
+                    localStorage.setItem("jstree", JSON.stringify(data));
+                }
+            }     
+
+            $('#jstree_demo_div').on('create_node.jstree', function(event) {
+                saveData()
+            })
+            $('#jstree_demo_div').on('move_node.jstree', function(event) {
+                saveData()
+            })
+            $('#jstree_demo_div').on('delete_node.jstree', function(event) {
+                saveData()
+            })
+            $('#jstree_demo_div').on('rename_node.jstree', function(event) {
+                saveData()
+            })
+
+            function reloadCurrentNode() {
+                var node = jstree.get_node(selectedId)
+                $("#properties").html("");
+                if (node.original.obj) {
+                    for (let key of Object.keys(node.original.obj)) {
+                        var el = $('<div></div>');
+                        $("#properties").append(el);
+                        el.jqPropertyGrid(node.original.obj[key], {
+                            callback: propertyCallback(key),
+                            meta: components[key],
+                            isCollapsible: true,
+                            customTypes: {
+                                button: {
+                                    html: function(elemId, name, value, meta) {
+                                        setTimeout(() => {
+                                            $("#"+elemId).get(0).onclick = () => { value.apply(node.original.obj[key]) };
+                                        }, 100);
+                                        return '<button id="'+elemId+'">'+name+'</button>';
+                                    },
+                                    valueFn: false // value-return function (optional). If unset, default will be "function() { return $('#' + elemId).val(); }", set to false to disable it
+                                    // You can also put a makeValueFn function (taking elemId, name, value, meta parameters) to create value-return function on the fly (it will override valuefn setting), returning non-function will disable getting value for this property
+                                }
+                            }
+                        });
+                    }
+                    
+                }
+            }
+
+            $('#jstree_demo_div').on('activate_node.jstree', function (event, data) {
+                selectedId = data.node.id;
+                reloadCurrentNode()
+            
+            }).jstree({
+                'core' : {
+                    "themes": {
+                        "dots": false
+                    },
+                    "animation" : 0,
+                    "check_callback" : true,
+                    'data' : loadData
+                },
+                "plugins" : [ "contextmenu", "types", "dnd" ],
+                "types" : {
+                    "default" : {
+                        "icon" : "file icon"
+                    },
+                    "demo" : {
+                        "icon" : "braille icon"
+                    }
+                    },
+                "contextmenu": {items: function(node) {
+                    return {
+                        "Delete": {
+                            "label": "Delete",
+                            "action": function() {
+                                jstree.delete_node(node.id);
+                            }
+                        },
+                        "Debug": {
+                            "label": "Debug",
+                            "action": function() {
+                                console.log(node);
+                            }
+                        },
+                        "Add": {
+                            "label": "Add",
+                            "submenu": Object.keys(components).filter(key => {
+                                return (node.original.obj[key] === undefined)
+                            }).map(com => {
+                                return {
+                                    label: com,
+                                    action: function() {
+                                        node.original.obj[com] = Object.assign({}, components[com].default)
+                                        reloadCurrentNode();
+                                        saveData();
+                                    }
+                                }
+                            })
+                        }
+                    }
+                }}
+            });
+            var jstree = $('#jstree_demo_div').jstree(true);
+            
+
+function add() {
+    var name = prompt("New object");
+    jstree.create_node(null, {
+        text: name,
+        obj: {
+            "_": {
+                name: name
+            }
+        }
+    })
+
+}
+
+function propertyCallback(component) {
+    return function(input, name, value) {
+        jstree.get_node(selectedId).original.obj[component][name] = value
+        if (component == "_" && name == "name") {
+            jstree.rename_node(selectedId, value)
+        }
+        saveData();
+    }
+}
+
+var components = {
+    "_": {
+        name: {group: "Node"}
+    },
+    "abc": {
+        default: {
+            foo: "",
+            doSomething: function() {
+                alert(this.foo)
+            }
+        },
+        foo: {group: "Abc"},
+        doSomething: {group: "Abc", type: "button", name: " "}
+    }
+}
+
+
+
+
+        </script>
+    </body>
+</html>
