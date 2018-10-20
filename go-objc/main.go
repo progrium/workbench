@@ -1,14 +1,17 @@
 package main
 
 import (
-	"github.com/mkrautz/objc/AppKit"
-	"github.com/mkrautz/objc/Foundation"
+	"fmt"
+
+	"github.com/progrium/objc/AppKit"
+	foundation "github.com/progrium/objc/Foundation"
 )
 
 func main() {
-	rect := foundation.NSRectMake(0, 0, 400, 600)
 	window := appkit.NewNSWindow(
-		rect,
+		foundation.NSRect{
+			10.0, 10.0, 500.0, 400.0,
+		},
 		appkit.NSTitledWindowMask|appkit.NSClosableWindowMask|appkit.NSMiniaturizableWindowMask,
 		appkit.NSBackingStoreBuffered,
 		false,
@@ -17,5 +20,11 @@ func main() {
 	window.MakeKeyAndOrderFront(window)
 
 	app := appkit.NSSharedApplication()
+	app.SendMsg("setActivationPolicy:", 0)
+	fmt.Println("running...")
 	app.Run()
 }
+
+//statusBarItem := objc.GetClass("NSStatusBar").SendMsg("systemStatusBar").SendMsg("statusItemWithLength:", -1.0)
+
+//statusBarItem.SendMsg("button").SendMsg("setTitle:", foundation.NSStringFromString("Hello world").Object)
